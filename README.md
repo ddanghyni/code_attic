@@ -49,9 +49,7 @@ Focus areas:
 ### 3. Deep Learning (PyTorch)
 PyTorch-based implementations related to my research interests:
 
-- neural network building blocks
-- training loops and loss design
-- experiments for representation learning
+- not update yetttt.....
 
 
 
