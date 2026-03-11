@@ -8,11 +8,13 @@ DEVICE = "mps" if torch.mps.is_available() else "cpu"
 def Train(model, train_DL, criterion, optimizer, EPOCH):
     
     loss_history = []
+    acc_history = []
     NoT = len(train_DL.dataset)
     #to train mode
     model.train()
     for ep in range(EPOCH):
         rloss = 0
+        rcorrect = 0
         for x_batch, y_batch in train_DL:
             x_batch = x_batch.to(DEVICE)
             y_batch = y_batch.to(DEVICE)
@@ -27,13 +29,21 @@ def Train(model, train_DL, criterion, optimizer, EPOCH):
             #loss accumulation
             loss_b = loss.item() * x_batch.shape[0]
             rloss += loss_b
-        #print loss
+            
+            #tracking test accuary
+            pred = y_hat.argmax(dim = 1)
+            correct_b = torch.sum(pred == y_batch).item()
+            rcorrect += correct_b
+            
+        #print loss & Accuary
         loss_e = rloss/NoT
         loss_history += [loss_e]
+        accuracy_e = rcorrect/len(train_DL.dataset)*100
+        acc_history += [accuracy_e]
         print(f"Epoch: {ep+1}, train loss: {(round(loss_e, 3))}")
-        print("-"*20)
-        
-    return loss_history
+        print(f"Train Accuaracy: {rcorrect}/{len(train_DL.dataset)} ({round(accuracy_e, 1)}%)")
+        print("-"*20)        
+    return loss_history, acc_history
 
 
 def Test(model, test_DL):
