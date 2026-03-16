@@ -118,12 +118,12 @@ def parameter_updating(theta_init, Y, D, LR, max_iter):
 # =======================================================
 np.random.seed(202682114)
 
-S, D, Y = generate_data(n=500, true_mu=0.0, true_a=2.0, true_b=3.0)
+S, D, Y = generate_data(n=1000, true_mu=0.0, true_a=2.0, true_b=3.0)
 
 theta_init = np.array([1.0, 2.0])  # [a, b] 초기값
 
 theta_hat, hist_a, hist_b, hist_ll = parameter_updating(
-    theta_init, Y, D, LR=0.001, max_iter=5000
+    theta_init, Y, D, LR=0.001, max_iter=5000 
 )
 
 print(f"\nResults:")
