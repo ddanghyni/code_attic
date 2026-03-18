@@ -1,20 +1,3 @@
-"""
-부산 카페/음식점 Google Places API 데이터 수집기
-=================================================
-Google Places API (New)를 사용하여 합법적으로 데이터 수집
-
-수집 항목:
-  - 상호명, 업종, 평점(1~5), 리뷰 수, 가격대(0~4)
-  - 주소, 행정구, 위도/경도
-  - (선택) 전화번호, 웹사이트, 영업시간
-
-사용 API:
-  - Nearby Search (New): 좌표 기반 주변 검색
-  - Text Search (New): 키워드 기반 검색 (대안)
-
-비용: 매월 $200 무료 크레딧 내에서 충분히 수행 가능
-"""
-
 import requests
 import csv
 import json
@@ -316,23 +299,19 @@ class GooglePlacesCollector:
         center_lng: float,
         place_types: List[str],
         type_label: str,
-        radius: float = 2000,
+        radius: float = 1500,
         grid_offsets: List[tuple] = None,
     ):
         """
         한 행정구를 격자로 나눠서 Nearby Search 여러 번 호출
         → 한 번에 최대 20개만 반환하므로, 좌표를 조금씩 이동시켜 더 많이 수집
+        5×5 격자 (25개 포인트) + 반경 1.5km → 행정구 대부분 커버
         """
         if grid_offsets is None:
-            # 기본 격자: 중심 + 상하좌우 + 대각선 (9개 포인트)
-            delta = 0.015  # 약 1.5km
-            grid_offsets = [
-                (0, 0),
-                (delta, 0), (-delta, 0),
-                (0, delta), (0, -delta),
-                (delta, delta), (delta, -delta),
-                (-delta, delta), (-delta, -delta),
-            ]
+            # 5×5 격자 (25개 포인트)
+            delta = 0.012  # 약 1.2km
+            offsets = [-2*delta, -delta, 0, delta, 2*delta]
+            grid_offsets = [(dlat, dlng) for dlat in offsets for dlng in offsets]
 
         total_new = 0
 
@@ -428,10 +407,12 @@ class GooglePlacesCollector:
             )
             print(f"  카페 (Nearby): +{n2}개")
 
-            # 3) Text Search 보완 (더 다양한 결과)
-            n3 = self.collect_by_text_search(district, lat, lng, "맛집")
-            n4 = self.collect_by_text_search(district, lat, lng, "카페")
-            print(f"  Text Search 보완: +{n3 + n4}개")
+            # 3) Text Search 보완 (더 다양한 키워드로)
+            text_new = 0
+            for keyword in ["맛집", "카페", "음식점", "식당", "커피"]:
+                n = self.collect_by_text_search(district, lat, lng, keyword)
+                text_new += n
+            print(f"  Text Search 보완: +{text_new}개")
 
             print(f"  → 누적: {len(self.all_restaurants)}개 (API 요청: {self.request_count}회)")
 
