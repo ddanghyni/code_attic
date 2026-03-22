@@ -55,7 +55,6 @@ def Test(model, test_DL):
             y_batch = y_batch.to(DEVICE)
             #inference
             y_hat= model(x_batch)
-            
             pred = y_hat.argmax(dim=1)
             correct_b = torch.sum(pred == y_batch).item()
             rcorrect += correct_b
