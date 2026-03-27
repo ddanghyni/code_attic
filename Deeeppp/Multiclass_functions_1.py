@@ -35,7 +35,7 @@ def Train(model, train_DL, criterion, optimizer, EPOCH):
             correct_b = torch.sum(pred == y_batch).item()
             rcorrect += correct_b
             
-        #print loss & Accuary
+        # print loss & Accuary
         loss_e = rloss/NoT
         loss_history += [loss_e]
         accuracy_e = rcorrect/len(train_DL.dataset)*100
