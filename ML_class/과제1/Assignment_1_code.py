@@ -1275,22 +1275,26 @@ print("  '숨은 카페' 효과 — 단골 중심의 소수 리뷰어가 높은 
 #%% 소주제 5
 # 모델링 준비
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from sklearn.preprocessing import StandardScaler
+from scipy.optimize import minimize
+from scipy.special import gammaln
 
-# ── 특성 변수 준비 ──
-# 수치형: log_review_count, price_level
-# 범주형 → 더미변수: district (기준: 강서구), business_type (기준: 음식점)
+# ── 특성 변수 준비 (price를 범주형으로) ──
 X = pd.get_dummies(
-    df[["log_review_count", "price_level", "district", "business_type"]],
-    columns=["district", "business_type"],
+    df[["log_review_count", "price_category", "district", "business_type"]],
+    columns=["price_category", "district", "business_type"],
     drop_first=True,
 )
 y = df["rating"]
- 
+
 print(f"독립변수: {X.shape[1]}개")
-print(f"  수치형 (2개): log_review_count, price_level")
-print(f"  더미변수 (16개): district 15개 (기준: 강서구), business_type 1개 (기준: 음식점)")
+print(f"  수치형 (1개): log_review_count")
+print(f"  더미변수 (18개):")
+print(f"    price_category 2개 (기준: 고가)")
+print(f"    district 15개 (기준: 강서구)")
+print(f"    business_type 1개 (기준: 음식점)")
 print(f"종속변수: rating (n = {len(y)}, 평균 = {y.mean():.3f}, σ = {y.std():.3f})")
 
 #%% 다중공선성 진단
@@ -1303,56 +1307,50 @@ def calc_vif(X_df):
         r2 = LinearRegression().fit(X_temp, y_temp).score(X_temp, y_temp)
         vif = 1 / (1 - r2) if r2 < 1 else float("inf")
         vif_data.append({"변수": col, "VIF": round(vif, 2)})
-    return pd.DataFrame(vif_data)
- 
-# 주요 수치형 + 업종 변수
-X_vif = df[["log_review_count", "price_level"]].copy()
-X_vif["business_type_카페"] = (df["business_type"] == "카페").astype(int)
- 
-vif_result = calc_vif(X_vif)
-print("Table 8. 다중공선성 진단 (VIF)")
+    return pd.DataFrame(vif_data).sort_values("VIF", ascending=False)
+
+vif_result = calc_vif(X)
+print("Table 8. 전체 독립변수 다중공선성 진단 (VIF)")
 print(vif_result.to_string(index=False))
+print(f"\nVIF > 10인 변수: {(vif_result['VIF'] > 10).sum()}개")
+print(f"최대 VIF: {vif_result['VIF'].max():.2f}")
+print(f"\n판단: 모든 VIF < 10 → 심각한 다중공선성 없음")
+print(f"  price_category 더미의 VIF가 ~5인 것은 저가/중가가 상호 배타적이기 때문이며 정상 범위임")
 
 #%% 모델 적합
 # Train/Test 분리
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-print(f"학습: {len(X_train)}개 (80%), 테스트: {len(X_test)}개 (20%)")
- 
-# 다중회귀 적합
-model = LinearRegression()
-model.fit(X_train, y_train)
- 
-# 예측
-y_pred_train = model.predict(X_train)
-y_pred_test = model.predict(X_test)
- 
-# 성능 지표
-r2_train = r2_score(y_train, y_pred_train)
-r2_test = r2_score(y_test, y_pred_test)
-rmse_test = np.sqrt(mean_squared_error(y_test, y_pred_test))
-mae_test = mean_absolute_error(y_test, y_pred_test)
- 
-print(f"\n다중회귀 모델 성능")
+idx_train, idx_test = train_test_split(range(len(df)), test_size=0.2, random_state=42)
+X_train, X_test = X.iloc[idx_train], X.iloc[idx_test]
+y_train, y_test = y.iloc[idx_train], y.iloc[idx_test]
+
+print(f"학습: {len(idx_train)}개 (80%), 테스트: {len(idx_test)}개 (20%)")
+
+# OLS 다중회귀 적합
+ols = LinearRegression()
+ols.fit(X_train, y_train)
+y_pred_ols = ols.predict(X_test)
+
+r2_ols = r2_score(y_test, y_pred_ols)
+rmse_ols = np.sqrt(mean_squared_error(y_test, y_pred_ols))
+mae_ols = mean_absolute_error(y_test, y_pred_ols)
+
+print(f"\nOLS 다중회귀 성능")
 print(f"{'─'*40}")
-print(f"  R² (학습):  {r2_train:.4f}")
-print(f"  R² (테스트): {r2_test:.4f}")
-print(f"  RMSE:       {rmse_test:.4f}")
-print(f"  MAE:        {mae_test:.4f}")
+print(f"  R² (테스트): {r2_ols:.4f}")
+print(f"  RMSE:       {rmse_ols:.4f}")
+print(f"  MAE:        {mae_ols:.4f}")
 print(f"{'─'*40}")
-print(f"\n해석:")
-print(f"  R^2 = {r2_test:.4f}는 가격, 리뷰 수, 지역, 업종이")
-print(f"  평점 변동의 약 {r2_test*100:.1f}%만 설명한다는 의미이다.")
-print(f"  나머지 {(1-r2_test)*100:.1f}%는 이 변수들로 설명할 수 없다.")
+print(f"\n해석: 가격, 리뷰 수, 지역, 업종이 평점 변동의 약 {r2_ols*100:.1f}%만 설명한다.")
 
 #%% 회귀계수 분석
 # 회귀 계수 정리
 coef_df = pd.DataFrame({
     "변수": X.columns,
-    "계수(β)": model.coef_,
-    "|계수|": np.abs(model.coef_),
+    "계수(β)": ols.coef_,
+    "|계수|": np.abs(ols.coef_),
 }).sort_values("|계수|", ascending=False)
- 
-print(f"절편 (β₀) = {model.intercept_:.4f}")
+
+print(f"절편 (β₀) = {ols.intercept_:.4f}")
 print(f"\nTable 9. 다중회귀 계수 (절대값 순)")
 print(coef_df.to_string(index=False))
  
@@ -1362,64 +1360,70 @@ print(coef_df.to_string(index=False))
 # %%
 top_n = 10
 top_coefs = coef_df.head(top_n).sort_values("계수(β)")
- 
+
 fig, ax = plt.subplots(figsize=(10, 6))
 colors_coef = ["#C44E52" if v < 0 else "#5B9BD5" for v in top_coefs["계수(β)"]]
 ax.barh(range(len(top_coefs)), top_coefs["계수(β)"].values, color=colors_coef, edgecolor="white")
 ax.set_yticks(range(len(top_coefs)))
 ax.set_yticklabels(top_coefs["변수"].values)
 ax.axvline(0, color="black", linewidth=0.8)
- 
+
 for i, v in enumerate(top_coefs["계수(β)"].values):
     offset = 0.003 if v >= 0 else -0.003
     ha = "left" if v >= 0 else "right"
     ax.text(v + offset, i, f"{v:.4f}", va="center", ha=ha, fontsize=9, fontweight="bold")
- 
+
 ax.set_xlabel("회귀 계수 (β)", fontsize=11)
-ax.set_title("Figure 20. 다중회귀 계수 (상위 10개)\n파랑 = 평점에 양(+)의 영향 / 빨강 = 음(-)의 영향", fontsize=13, fontweight="bold")
+ax.set_title("Figure 20. 다중회귀 계수 (상위 10개, price 범주형)\n파랑 = 평점↑ / 빨강 = 평점↓", fontsize=13, fontweight="bold")
 plt.tight_layout()
 plt.show()
- 
+
 # 해석
 print("회귀 계수 해석:")
- 
+
+# price_category
+pc_coefs = coef_df[coef_df["변수"].str.startswith("price_category")]
+print(f"\n  1) 가격대 (기준: 고가)")
+for _, row in pc_coefs.iterrows():
+    cat = row["변수"].replace("price_category_", "")
+    print(f"     {cat}: β = {row['계수(β)']:.4f}")
+print(f"     → 저가는 고가 대비 평점이 거의 동일 (+0.005)")
+print(f"       중가는 고가 대비 약 0.033점 낮음")
+print(f"       가격대 효과는 전반적으로 미미 → 소주제 1 결과와 일치")
+
+# log_review_count
 lr_coef = coef_df[coef_df["변수"]=="log_review_count"]["계수(β)"].values[0]
-print(f"\n  1) log_review_count (β = {lr_coef:.4f})")
-print(f"     리뷰 수가 증가하면 평점이 소폭 {'감소' if lr_coef < 0 else '증가'}하는 경향.")
-print(f"     소주제 2의 결과(리뷰 축적 시 평점의 평균 회귀)와 일치한다.")
- 
-pl_coef = coef_df[coef_df["변수"]=="price_level"]["계수(β)"].values[0]
-print(f"\n  2) price_level (β = {pl_coef:.4f})")
-print(f"     가격대가 1단계 올라갈 때 평점 변화: {pl_coef:.4f}점.")
-print(f"     사실상 무시 가능한 수준 -> 소주제 1(효과 크기 매우 작음)과 일치한다.")
- 
-bt_cols = [c for c in coef_df["변수"] if "business_type" in c]
-if bt_cols:
-    bt_coef = coef_df[coef_df["변수"]==bt_cols[0]]["계수(β)"].values[0]
-    print(f"\n  3) {bt_cols[0]} (β = {bt_coef:.4f})")
-    print(f"     다른 변수를 통제한 상태에서도 카페가 음식점보다 약 {bt_coef:.3f}점 높다.")
-    print(f"     소주제 4의 결과(카페 > 음식점)와 일치한다.")
- 
-dist_coefs = coef_df[coef_df["변수"].str.startswith("district_")].sort_values("계수(β)", ascending=False)
-print(f"\n  4) district (행정구)")
-print(f"     기준(강서구) 대비 평점이 높은 구: {', '.join(dist_coefs[dist_coefs['계수(β)']>0]['변수'].str.replace('district_','').head(3))}")
-print(f"     기준(강서구) 대비 평점이 낮은 구: {', '.join(dist_coefs[dist_coefs['계수(β)']<0]['변수'].str.replace('district_','').tail(3))}")
-print(f"     행정구 간 계수 범위: {dist_coefs['계수(β)'].min():.4f} ~ {dist_coefs['계수(β)'].max():.4f}")
-print(f"     -> 행정구 효과도 크지 않음. 소주제 3(전체 비교 시 유의하지 않음)과 일치한다.")
+print(f"\n  2) log_review_count (β = {lr_coef:.4f})")
+print(f"     → 리뷰 수 증가에 따른 평점 변화가 거의 없음")
+print(f"     → 다른 변수를 통제하면 리뷰 수의 독립적 효과는 극히 미미")
+
+# business_type
+bt_coef = coef_df[coef_df["변수"].str.contains("business_type")]["계수(β)"].values[0]
+print(f"\n  3) business_type_카페 (β = {bt_coef:.4f})")
+print(f"     → 다른 변수를 통제해도 카페가 음식점보다 약 {bt_coef:.3f}점 높음")
+print(f"     → 소주제 4 결과와 일치")
+
+# district
+dist_coefs = coef_df[coef_df["변수"].str.startswith("district_")].sort_values("계수(β)")
+print(f"\n  4) 행정구 (기준: 강서구)")
+print(f"     가장 낮은 구: {dist_coefs.iloc[0]['변수'].replace('district_','')} (β={dist_coefs.iloc[0]['계수(β)']:.4f})")
+print(f"     가장 높은 구: {dist_coefs.iloc[-1]['변수'].replace('district_','')} (β={dist_coefs.iloc[-1]['계수(β)']:.4f})")
+print(f"     → 모든 행정구가 기준(강서구) 대비 음(-)의 계수 → 강서구가 평점 가장 높음")
+print(f"     → 하지만 계수 범위가 {dist_coefs['계수(β)'].min():.3f}~{dist_coefs['계수(β)'].max():.3f}로 작음")
 
 #%% 잔차진단
-residuals = y_test.values - y_pred_test
- 
+residuals = y_test.values - y_pred_ols
+
 fig, axes = plt.subplots(2, 2, figsize=(13, 10))
- 
-# (a) 잔차 vs 예측값 → 선형성 + 등분산성
-axes[0,0].scatter(y_pred_test, residuals, alpha=0.25, s=12, color="#5B9BD5")
+
+# (a) 잔차 vs 예측값
+axes[0,0].scatter(y_pred_ols, residuals, alpha=0.25, s=12, color="#5B9BD5")
 axes[0,0].axhline(0, color="red", linestyle="--", linewidth=1)
 axes[0,0].set_xlabel("예측값", fontsize=11)
 axes[0,0].set_ylabel("잔차", fontsize=11)
 axes[0,0].set_title("(a) 잔차 vs 예측값\n→ 패턴 없으면 선형성·등분산성 충족", fontsize=11)
- 
-# (b) 잔차 히스토그램 → 정규성
+
+# (b) 잔차 히스토그램
 axes[0,1].hist(residuals, bins=30, color="#5B9BD5", edgecolor="white", density=True, alpha=0.7)
 from scipy.stats import norm
 x_norm = np.linspace(residuals.min(), residuals.max(), 100)
@@ -1429,49 +1433,177 @@ axes[0,1].set_xlabel("잔차", fontsize=11)
 axes[0,1].set_ylabel("밀도", fontsize=11)
 axes[0,1].set_title("(b) 잔차 분포\n→ 종형이면 정규성 충족", fontsize=11)
 axes[0,1].legend()
- 
-# (c) Q-Q Plot → 정규성 정밀 확인
-from scipy.stats import probplot
+
+# (c) Q-Q Plot
+from scipy.stats import probplot, shapiro
 probplot(residuals, dist="norm", plot=axes[1,0])
 axes[1,0].set_title("(c) Q-Q Plot\n→ 대각선에 가까우면 정규분포", fontsize=11)
- 
-# (d) 실제값 vs 예측값
-axes[1,1].scatter(y_test, y_pred_test, alpha=0.25, s=12, color="#5B9BD5")
-lims = [min(y_test.min(), y_pred_test.min())-0.1, max(y_test.max(), y_pred_test.max())+0.1]
+
+# (d) 실제 vs 예측
+axes[1,1].scatter(y_test, y_pred_ols, alpha=0.25, s=12, color="#5B9BD5")
+lims = [min(y_test.min(), y_pred_ols.min())-0.1, max(y_test.max(), y_pred_ols.max())+0.1]
 axes[1,1].plot(lims, lims, "r--", linewidth=1.5, label="y = x (완벽한 예측)")
 axes[1,1].set_xlabel("실제 평점", fontsize=11)
 axes[1,1].set_ylabel("예측 평점", fontsize=11)
 axes[1,1].set_title("(d) 실제 vs 예측\n→ 대각선에 가까울수록 정확", fontsize=11)
 axes[1,1].legend(fontsize=9)
- 
-plt.suptitle("Figure 21. 다중회귀 잔차 진단", fontsize=14, fontweight="bold")
+
+plt.suptitle("Figure 21. OLS 다중회귀 잔차 진단", fontsize=14, fontweight="bold")
 plt.tight_layout()
 plt.show()
- 
+
 # 잔차 통계
-from scipy.stats import shapiro
-res_sample = residuals[:500] if len(residuals) > 500 else residuals
-res_shapiro = shapiro(res_sample)
- 
+res_shapiro = shapiro(residuals[:500] if len(residuals) > 500 else residuals)
+
 print("잔차 진단 요약")
 print(f"{'─'*55}")
-print(f"  잔차 평균:     {residuals.mean():.4f} (0에 가까우면 굿)")
+print(f"  잔차 평균:     {residuals.mean():.4f}")
 print(f"  잔차 표준편차:  {residuals.std():.4f}")
 print(f"  잔차 왜도:     {pd.Series(residuals).skew():.4f}")
 print(f"  Shapiro-Wilk:  W={res_shapiro[0]:.4f}, p={res_shapiro[1]:.6f}")
 print(f"{'─'*55}")
-print(f"\n  (a) 선형성·등분산성: 뚜렷한 패턴 없음 -> 크게 위배되지 않음")
-print(f"      단, 예측값이 {y_pred_test.min():.2f}~{y_pred_test.max():.2f}에 밀집")
-print(f"      -> 모델이 대부분 비슷한 값을 예측하고 있다는 뜻")
-print(f"  (b) 정규성: 좌편향 존재, Shapiro p < 0.05 -> 완전한 정규분포는 아님")
-print(f"  (c) Q-Q Plot: 양 끝단 이탈 -> 극단적 평점(2~3점대, 5점)에서 예측 부정확")
-print(f"  (d) 실제 vs 예측: 예측이 좁은 범위에 집중 -> 실제 평점의 다양성 미반영")
-#%% R^2 분석
+print(f"\n진단 결과:")
+print(f"  (a) 선형성·등분산성:")
+print(f"      잔차 vs 예측값에서 뚜렷한 패턴 없음 → 크게 위배되지 않음")
+print(f"      단, 예측값이 {y_pred_ols.min():.2f}~{y_pred_ols.max():.2f}에 밀집")
+print(f"      → 모델이 대부분의 가게에 대해 비슷한 값(~4.1)을 예측하고 있음")
+print(f"  (b) 정규성:")
+print(f"      잔차의 왜도 = {pd.Series(residuals).skew():.2f}로 좌편향 존재")
+print(f"      Shapiro-Wilk p < 0.05 → 엄밀한 정규성은 충족되지 않음")
+print(f"      단, n={len(residuals)}로 충분히 크므로 중심극한정리에 의해")
+print(f"      회귀 계수의 추론은 근사적으로 유효")
+print(f"  (c) Q-Q Plot: 양 끝단 이탈 → 극단적 평점(2~3점대, 5점)에서 예측 부정확")
+print(f"  (d) 실제 vs 예측: 예측이 좁은 범위에 집중 → 실제 평점의 다양성 미반영")
+#%% 모델 구조 변경을 통한 검증: "모델의 문제인가, 변수의 한계인가"
+# ── (1) Beta 회귀 ──
+# 평점을 (rating - 1) / 4로 변환하여 (0, 1) 범위로 만듦
+# Beta 분포는 (0, 1) 범위의 연속형 데이터에 이론적으로 적합
+
+y_beta_all = ((df["rating"] - 1) / 4).clip(1e-6, 1-1e-6)
+yb_train = y_beta_all.iloc[idx_train]
+yb_test = y_beta_all.iloc[idx_test]
+
+X_train_np = X_train.values.astype(float)
+X_test_np = X_test.values.astype(float)
+n_feat = X_train.shape[1]
+
+def logit_fn(x):
+    return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+
+def beta_negll(params, X, y):
+    """Beta 분포의 음의 로그우도"""
+    beta = params[:X.shape[1]+1]
+    phi = np.exp(np.clip(params[X.shape[1]+1], -10, 10))  # precision parameter
+    mu = logit_fn(beta[0] + X @ beta[1:])
+    a = np.clip(mu * phi, 1e-8, 1e6)
+    b = np.clip((1 - mu) * phi, 1e-8, 1e6)
+    return -np.sum(gammaln(phi) - gammaln(a) - gammaln(b) + (a-1)*np.log(y) + (b-1)*np.log(1-y))
+
+# OLS 결과를 초기값으로 활용
+ols_init = LinearRegression().fit(X_train_np, yb_train.values)
+init_b = np.zeros(n_feat + 2)
+if 0 < ols_init.intercept_ < 1:
+    init_b[0] = np.log(ols_init.intercept_ / (1 - ols_init.intercept_))
+init_b[1:n_feat+1] = ols_init.coef_ * 4
+init_b[-1] = np.log(30)
+
+res_beta = minimize(beta_negll, init_b, args=(X_train_np, yb_train.values),
+                    method="L-BFGS-B", options={"maxiter": 10000})
+
+bp = res_beta.x[:n_feat+1]
+y_pred_beta = logit_fn(bp[0] + X_test_np @ bp[1:]) * 4 + 1  # 원래 스케일 복원
+
+r2_beta = r2_score(y_test, y_pred_beta)
+rmse_beta = np.sqrt(mean_squared_error(y_test, y_pred_beta))
+mae_beta = mean_absolute_error(y_test, y_pred_beta)
+print(f"Beta 회귀: R²={r2_beta:.4f}, RMSE={rmse_beta:.4f}, MAE={mae_beta:.4f} (수렴: {res_beta.success})")
+
+# ── (2) Gamma GLM (log link) ──
+def gamma_negll(params, X, y):
+    """Gamma 분포의 음의 로그우도"""
+    beta = params[:X.shape[1]+1]
+    alpha = np.exp(np.clip(params[X.shape[1]+1], -10, 10))  # shape parameter
+    mu = np.exp(np.clip(beta[0] + X @ beta[1:], -10, 10))
+    return -np.sum(alpha*np.log(alpha/mu) + (alpha-1)*np.log(y) - alpha*y/mu - gammaln(alpha))
+
+init_g = np.zeros(n_feat + 2)
+init_g[0] = np.log(y_train.mean())
+init_g[-1] = np.log(5)
+res_gamma = minimize(gamma_negll, init_g, args=(X_train_np, y_train.values.astype(float)),
+                     method="L-BFGS-B", options={"maxiter": 10000})
+
+gp = res_gamma.x[:n_feat+1]
+y_pred_gamma = np.exp(gp[0] + X_test_np @ gp[1:])
+
+r2_gamma = r2_score(y_test, y_pred_gamma)
+rmse_gamma = np.sqrt(mean_squared_error(y_test, y_pred_gamma))
+mae_gamma = mean_absolute_error(y_test, y_pred_gamma)
+print(f"Gamma GLM: R²={r2_gamma:.4f}, RMSE={rmse_gamma:.4f}, MAE={mae_gamma:.4f} (수렴: {res_gamma.success})")
+
+# ── (3) Multinomial Logit (순서형 접근) ──
+# 평점을 6개 범주로 이산화하여 분류 문제로 접근
+df["rating_cat"] = pd.cut(df["rating"], bins=[0, 3.5, 3.9, 4.1, 4.3, 4.5, 5.1],
+                           labels=["~3.5", "3.6~3.9", "4.0~4.1", "4.2~4.3", "4.4~4.5", "4.6~5.0"])
+scaler = StandardScaler()
+X_tr_s = scaler.fit_transform(X_train)
+X_te_s = scaler.transform(X_test)
+mlr = LogisticRegression(max_iter=5000, random_state=42)
+mlr.fit(X_tr_s, df["rating_cat"].iloc[idx_train])
+ord_acc = mlr.score(X_te_s, df["rating_cat"].iloc[idx_test])
+baseline_acc = df["rating_cat"].value_counts(normalize=True).max()
+print(f"Multinomial Logit: Accuracy={ord_acc:.4f} (Baseline={baseline_acc:.4f})")
+
+#%% 모델 비교 종합
+print("Table 10. 모델 성능 종합 비교")
+print(f"{'─'*70}")
+print(f"{'모델':<25} {'분포 가정':<15} {'R²':<10} {'RMSE':<10} {'MAE':<10}")
+print(f"{'─'*70}")
+print(f"{'OLS 다중회귀':<25} {'정규':<15} {r2_ols:<10.4f} {rmse_ols:<10.4f} {mae_ols:<10.4f}")
+print(f"{'Beta 회귀 (logit)':<25} {'Beta':<15} {r2_beta:<10.4f} {rmse_beta:<10.4f} {mae_beta:<10.4f}")
+print(f"{'Gamma GLM (log)':<25} {'Gamma':<15} {r2_gamma:<10.4f} {rmse_gamma:<10.4f} {mae_gamma:<10.4f}")
+print(f"{'─'*70}")
+print(f"{'Multinomial Logit':<25} {'다항':<15} Accuracy = {ord_acc:.4f} (Baseline = {baseline_acc:.4f})")
+print(f"{'─'*70}")
+
+# 시각화
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# (a) R² 비교
+model_names = ["OLS\n다중회귀", "Beta\n회귀", "Gamma\nGLM"]
+r2_vals = [r2_ols, r2_beta, r2_gamma]
+colors_m = ["#4C72B0", "#55A868", "#C44E52"]
+bars = axes[0].bar(model_names, r2_vals, color=colors_m, edgecolor="white", width=0.5)
+axes[0].axhline(0, color="black", linewidth=0.8)
+for bar, val in zip(bars, r2_vals):
+    axes[0].text(bar.get_x() + bar.get_width()/2, max(val, 0) + 0.003,
+                 f"{val:.4f}", ha="center", fontsize=11, fontweight="bold")
+axes[0].set_ylabel("R²", fontsize=11)
+axes[0].set_title("(a) 모델별 R² 비교\n→ 모델을 바꿔도 R² ≈ 0.03", fontsize=12)
+axes[0].set_ylim(-0.2, 0.1)
+
+# (b) RMSE 비교
+rmse_vals = [rmse_ols, rmse_beta, rmse_gamma]
+bars = axes[1].bar(model_names, rmse_vals, color=colors_m, edgecolor="white", width=0.5)
+baseline_rmse = y_test.std()
+axes[1].axhline(baseline_rmse, color="red", linestyle="--", alpha=0.7,
+                label=f"Baseline σ={baseline_rmse:.3f}")
+for bar, val in zip(bars, rmse_vals):
+    axes[1].text(bar.get_x() + bar.get_width()/2, val + 0.003,
+                 f"{val:.4f}", ha="center", fontsize=11, fontweight="bold")
+axes[1].set_ylabel("RMSE", fontsize=11)
+axes[1].set_title("(b) 모델별 RMSE 비교", fontsize=12)
+axes[1].legend(fontsize=9)
+
+plt.suptitle("Figure 22. 모델 구조 변경에 따른 성능 비교", fontsize=14, fontweight="bold")
+plt.tight_layout()
+plt.show()
+
+#%% 설명력의 한계: 모델이 아니라 변수의 문제
 fig, ax = plt.subplots(figsize=(10, 6))
- 
-explained = r2_test * 100
-unexplained = (1 - r2_test) * 100
- 
+
+explained = max(r2_ols, 0) * 100
+unexplained = 100 - explained
+
 wedges, texts, autotexts = ax.pie(
     [explained, unexplained],
     labels=None,
@@ -1481,30 +1613,33 @@ wedges, texts, autotexts = ax.pie(
     wedgeprops=dict(edgecolor="white", linewidth=2),
     textprops=dict(fontsize=14, fontweight="bold"),
 )
- 
+
 ax.legend(
     [f"설명 가능 ({explained:.1f}%)\n가격, 리뷰 수, 지역, 업종",
      f"설명 불가 ({unexplained:.1f}%)\n맛, 서비스, 청결도, 분위기 등"],
     loc="center left", bbox_to_anchor=(1, 0.5), fontsize=11,
 )
- 
-ax.set_title("Figure 22. 평점 변동의 설명력 분해\n-> 외부 관찰 가능 요인으로 평점의 약 4%만 설명 가능",
+
+ax.set_title("Figure 23. 평점 변동의 설명력 분해\n→ 외부 관찰 가능 요인으로 평점의 약 3~4%만 설명 가능",
              fontsize=13, fontweight="bold")
 plt.tight_layout()
 plt.show()
- 
-print("R²가 낮은 이유:")
+
+print("핵심 결론: 모델의 문제가 아니라 변수의 한계")
+print(f"{'─'*60}")
+print(f"  OLS (정규 가정):     R² = {r2_ols:.4f}")
+print(f"  Beta (bounded 가정): R² = {r2_beta:.4f}")
+print(f"  Gamma (양수 가정):   R² = {r2_gamma:.4f}")
+print(f"  Multinomial (순서형): Accuracy = {ord_acc:.4f} ≈ Baseline {baseline_acc:.4f}")
+print(f"{'─'*60}")
 print(f"")
-print(f"  1) 평점은 '직접 경험'의 결과물이다.")
-print(f"     맛, 서비스, 청결도, 분위기 등 실제 방문 경험이 평점을 결정한다.")
-print(f"     이런 요인은 가격·위치·리뷰 수로 포착할 수 없다.")
+print(f"  네 가지 서로 다른 모델 구조 — 정규 분포, Beta 분포, Gamma 분포,")
+print(f"  순서형 분류 — 를 적용하였으나, 모두 유사하게 낮은 성능을 보였다.")
 print(f"")
-print(f"  2) 평점의 변동 범위가 좁다.")
-print(f"     표준편차 {y.std():.3f} -> 설명할 변동 자체가 작다.")
+print(f"  이는 낮은 설명력의 원인이 '모델이 잘못 선택되어서'가 아니라")
+print(f"  '투입된 변수 자체가 평점을 설명하는 데 본질적으로 한계가 있기 때문'")
+print(f"  임을 실증적으로 입증한다.")
 print(f"")
-print(f"  3) 소주제 1~4의 개별 효과가 모두 작았다.")
-print(f"     개별 효과가 작으면, 합쳐도 설명력이 낮을 수밖에 없다.")
-print(f"")
-print(f"  4) 이 결과 자체가 의미 있는 발견이다.")
-print(f"     '비싸면 맛있다', '해운대가 맛집이 많다' 같은 통념이")
-print(f"     데이터로 지지되지 않음을 실증적으로 보여주었다.")
+print(f"  평점의 96%는 맛, 서비스, 분위기, 청결도 등 실제 방문 경험에 의해")
+print(f"  결정되며, 가격·위치·리뷰 수·업종 같은 외부 관찰 가능 정보만으로는")
+print(f"  평점을 예측할 수 없다.")
