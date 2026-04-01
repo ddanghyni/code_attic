@@ -1190,25 +1190,7 @@ print(f"     이는 음식점이 더 다양한 고객층(관광객 포함)으로
 print(f"     리뷰를 받아 평점이 '평균으로 회귀'하는 경향이 강하기 때문일 수 있다.")
 
 #%% 업종별 가격대 - 평점 관계 비교(교호작용)
-# 업종 × 가격대 교차 기술통계
-cross_stats = df.groupby(["business_type", "price_category"])["rating"].agg(
-    ["count", "mean", "std"]
-).round(3)
-cross_stats.columns = ["n", "평균", "표준편차"]
- 
-print("Table 7. 업종 × 가격대별 평점")
-print(cross_stats.to_string())
- 
-# 업종별 가격대 효과 검정
-print(f"\n업종별 가격대 효과 (Kruskal-Wallis)")
-for bt in ["음식점", "카페"]:
-    sub = df[df["business_type"] == bt]
-    groups = [sub[sub["price_category"]==c]["rating"] for c in ["저가","중가","고가"]]
-    H, p = kruskal(*groups)
-    sig = "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else "n.s."))
-    print(f"  {bt}: H = {H:.4f}, p = {p:.4f} {sig}")
-    
-#%% 교호작용 시각화
+
 fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 price_order = ["저가", "중가", "고가"]
  
@@ -1233,20 +1215,58 @@ axes[1].legend(title="업종", fontsize=10)
 plt.suptitle("Figure 18. 소주제 4 — 업종 × 가격대 교호작용", fontsize=14, fontweight="bold")
 plt.tight_layout()
 plt.show()
- 
-print("해석:")
-print("  음식점: 저가(4.157) > 중가(4.101) ≈ 고가(4.094)")
-print("    → 저가 음식점의 평점이 가장 높음 (가성비 효과)")
-print("    → 가격대별 유의한 차이 있음 (p = 0.027)")
-print("")
-print("  카페: 고가(4.273) > 저가(4.207) ≈ 중가(4.185)")
-print("    → 고가 카페의 평점이 가장 높음 (프리미엄 효과)")
-print("    → 가격대별 유의한 차이 없음 (p = 0.207)")
-print("")
-print("  ★ 교호작용 패턴:")
-print("    음식점은 '저가가 높은' 패턴 (가성비 선호)")
-print("    카페는 '고가가 높은' 패턴 (프리미엄 선호)")
-print("    → 소비자의 가격-품질 기대가 업종에 따라 다르다!")
+
+#%% 교호작용 검정: 부분 F-검정 시행
+from scipy.stats import f as f_dist
+from sklearn.linear_model import LinearRegression
+
+# ── 변수 생성 ──
+df["is_cafe"] = (df["business_type"] == "카페").astype(int)
+df["is_low"] = (df["price_category"] == "저가").astype(int)
+df["is_mid"] = (df["price_category"] == "중가").astype(int)
+
+# 교호작용항 = 업종 더미 × 가격대 더미
+df["cafe_x_low"] = df["is_cafe"] * df["is_low"]
+df["cafe_x_mid"] = df["is_cafe"] * df["is_mid"]
+
+y_inter = df["rating"].values
+
+# ── 모델 1: 주효과만 ──
+X_main = df[["is_cafe", "is_low", "is_mid"]].values
+model_main = LinearRegression().fit(X_main, y_inter)
+r2_main = model_main.score(X_main, y_inter)
+SS_res_main = np.sum((y_inter - model_main.predict(X_main))**2)
+
+# ── 모델 2: 주효과 + 교호작용 ──
+X_inter = df[["is_cafe", "is_low", "is_mid", "cafe_x_low", "cafe_x_mid"]].values
+model_inter = LinearRegression().fit(X_inter, y_inter)
+r2_inter = model_inter.score(X_inter, y_inter)
+SS_res_inter = np.sum((y_inter - model_inter.predict(X_inter))**2)
+
+# ── 부분 F-검정 ──
+n = len(y_inter)
+p_main = X_main.shape[1]     # 주효과 변수 수 (3)
+p_inter = X_inter.shape[1]   # 전체 변수 수 (5)
+df_num = p_inter - p_main    # 교호작용 변수 수 (2)
+df_den = n - p_inter - 1     # 잔차 자유도
+
+F_stat = ((SS_res_main - SS_res_inter) / df_num) / (SS_res_inter / df_den)
+p_value_f = 1 - f_dist.cdf(F_stat, df_num, df_den)
+
+# ── ΔR² (교호작용의 추가 설명력) ──
+delta_r2 = r2_inter - r2_main
+
+# 결과 출력
+print("교호작용 검정: 부분 F-검정 (Partial F-test)")
+print(f"{'─'*55}")
+print(f"  모델 1 (주효과만):       R² = {r2_main:.6f}")
+print(f"  모델 2 (주효과+교호작용): R² = {r2_inter:.6f}")
+print(f"  ΔR² (교호작용 추가 설명력): {delta_r2:.6f} ({delta_r2*100:.4f}%)")
+print(f"{'─'*55}")
+print(f"  F 통계량 = {F_stat:.4f}")
+print(f"  자유도   = ({df_num}, {df_den})")
+print(f"  p-value  = {p_value_f:.6f}")
+print(f"  결론: {'유의함 (p < 0.05)' if p_value_f < 0.05 else '유의하지 않음 (p ≥ 0.05)'}")
 
 #%% 업종별 리뷰 구간 - 평점 패턴 비교
 fig, ax = plt.subplots(figsize=(10, 6))
