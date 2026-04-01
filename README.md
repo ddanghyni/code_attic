@@ -1,11 +1,11 @@
-# 🧠 code_attic
+# code_attic
 
 A personal code archive for statistical computing, data processing,  
 and research-oriented implementations in Python.
 
 ---
 
-## 📌 About
+## About
 
 `code_attic` is a personal repository where I collect and organize  
 Python code snippets, implementations, and experiments developed during  
@@ -20,7 +20,7 @@ The focus is not on polished libraries, but on **clarity, correctness, and repro
 
 ---
 
-## 📂 Contents
+## Contents
 
 ### 1. Python Fundamentals & Tricks
 - Basic → intermediate → advanced Python syntax
@@ -78,7 +78,7 @@ Code related to **anomaly detection**, my main research focus:
 
 ---
 
-## 🎯 Purpose
+## Purpose
 
 - Maintain a **structured archive** of ideas and implementations  
 - Support **research reproducibility**
@@ -88,7 +88,7 @@ This repository is expected to evolve continuously as my research progresses.
 
 ---
 
-## 🧑‍🎓 Author
+## Author
 
 **Kim Sang-hyun**  
 M.S. Student in Statistics  
@@ -97,7 +97,7 @@ Research interests:
 
 ---
 
-## ⚠️ Notes
+## Notes
 
 - Code quality may vary depending on experimental purpose
 - Some implementations are exploratory rather than optimized
